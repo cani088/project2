@@ -15,7 +15,7 @@ spark = SparkSession.builder.appName("ReviewTokenization") \
     .config("spark.executor.memory", "4g") \
     .getOrCreate()
 
-df = spark.read.json("../reviews_devset_small.json")
+df = spark.read.json("../reviews_devset_full.json")
 pattern = r'\b\w+\b'
 
 tokenizer = RegexTokenizer(inputCol="reviewText", outputCol="tokens", pattern="\\W")
@@ -24,7 +24,6 @@ df_tokenized = tokenizer.transform(df)
 stopwords_remover = StopWordsRemover(inputCol="tokens", outputCol="filtered_tokens", stopWords=stopwords)
 categories_token_counts = stopwords_remover.transform(df_tokenized)\
     .select(col("category"), col("filtered_tokens").alias("tokens"))
-    # .show(n=10000)
 
 # Convert tokens to numerical features using CountVectorizer
 count_vectorizer = CountVectorizer(inputCol="tokens", outputCol="features")
@@ -36,17 +35,18 @@ label_indexer = StringIndexer(inputCol="category", outputCol="label")
 df_labeled = label_indexer.fit(df_features).transform(df_features)
 
 # Convert DataFrame to RDD for MLlib's ChiSqSelector
-rdd_data = df_labeled.select(col("label"), col("features")).rdd.map(lambda row: Row(label=row.label, features=row.features))
+rdd_data = df_labeled.select(col("label"), col("features"))\
+    # .rdd.map(lambda row: Row(label=row.label, features=row.features))
 
-df_rdd = spark.createDataFrame(rdd_data)
+# df_rdd = spark.createDataFrame(rdd_data).show(n=100)
 
 # Perform chi-squared selection
 selector = ChiSqSelector(numTopFeatures=10, featuresCol="features", outputCol="selectedFeatures", labelCol="label")
-selector_model = selector.fit(df_rdd)
-df_selected = selector_model.transform(df_rdd)
+selector_model = selector.fit(rdd_data)
+df_selected = selector_model.transform(rdd_data)
 
 # Convert back to DataFrame for further analysis or display
 df_result = df_selected.select(col("label"), col("selectedFeatures").alias("features"))
 
 # Show the resulting DataFrame with selected features
-df_result.show(truncate=False, n=1000)
+df_result.show(truncate=False, n=1000000)
