@@ -1,52 +1,69 @@
-from pyspark import Row
+import pyspark
+import json
+import re
+import math
+
 from pyspark.sql import SparkSession
-from pyspark.ml.feature import Tokenizer, StopWordsRemover, RegexTokenizer, CountVectorizer, StringIndexer, \
-    ChiSqSelector
+from operator import add
 
-from pyspark.sql.functions import col, collect_list, explode, count
+spark = SparkSession.builder.appName('ChiSquared').getOrCreate()
+sc = spark.sparkContext
 
-stopwords = []
-with open('../stopwords.txt', 'r') as file:
-    for word in file.read().split("\n"):
-        stopwords.append(word)
+dataset_path = '../reviews_devset_full.json'
+stopwords_path = '../stopwords.txt'
 
-spark = SparkSession.builder.appName("ReviewTokenization") \
-    .config("spark.driver.memory", "4g") \
-    .config("spark.executor.memory", "4g") \
-    .getOrCreate()
+regex = re.compile(r'[ \t\d()[\]{}.!?,;:+=\-_"\'`~#@&*%€$§\\/]+')
 
-df = spark.read.json("../reviews_devset_full.json")
-pattern = r'\b\w+\b'
+stopWords = set(sc.textFile(stopwords_path).collect())
+rdd_data = sc.textFile(dataset_path).map(lambda x: json.loads(x))
 
-tokenizer = RegexTokenizer(inputCol="reviewText", outputCol="tokens", pattern="\\W")
-df_tokenized = tokenizer.transform(df)
+# counts tokens occurrences throughout all documents
+token_counts = dict(
+    rdd_data.flatMap(lambda x: [(x['asin'], word.lower()) for word in set(regex.split(x['reviewText']))]) \
+        .filter(lambda x: x[1] not in stopWords) \
+        .map(lambda x: (x[1], x[0])) \
+        .groupByKey() \
+        .map(lambda x: (x[0], (len(set(x[1]))))).collect())
 
-stopwords_remover = StopWordsRemover(inputCol="tokens", outputCol="filtered_tokens", stopWords=stopwords)
-categories_token_counts = stopwords_remover.transform(df_tokenized)\
-    .select(col("category"), col("filtered_tokens").alias("tokens"))
+token_counts_per_category = rdd_data.flatMap(
+    lambda x: [(x['category'], x['asin'], word.lower()) for word in set(regex.split(x['reviewText']))]) \
+    .filter(lambda x: x[2] not in stopWords and x[2] and len(x[2]) > 1) \
+    .map(lambda x: ((x[0], x[2]), x[1]))
 
-# Convert tokens to numerical features using CountVectorizer
-count_vectorizer = CountVectorizer(inputCol="tokens", outputCol="features")
-count_vectorizer_model = count_vectorizer.fit(categories_token_counts)
-df_features = count_vectorizer_model.transform(categories_token_counts)
+category_tokens = token_counts_per_category.groupByKey().map(
+    lambda x: (x[0][0], (x[0][1], len(set(x[1]))))) \
+    .groupByKey()
 
-# Convert category to numerical labels using StringIndexer
-label_indexer = StringIndexer(inputCol="category", outputCol="label")
-df_labeled = label_indexer.fit(df_features).transform(df_features)
+categories_counts = dict(rdd_data.map(lambda x: (x['category'], x['asin'])) \
+                         .groupByKey() \
+                         .map(lambda x: (x[0], len(x[1]))) \
+                         .collect())
 
-# Convert DataFrame to RDD for MLlib's ChiSqSelector
-rdd_data = df_labeled.select(col("label"), col("features"))\
-    # .rdd.map(lambda row: Row(label=row.label, features=row.features))
+N = rdd_data.count()
 
-# df_rdd = spark.createDataFrame(rdd_data).show(n=100)
+def calculate_chi_square(category_data):
+    category = category_data[0]
 
-# Perform chi-squared selection
-selector = ChiSqSelector(numTopFeatures=10, featuresCol="features", outputCol="selectedFeatures", labelCol="label")
-selector_model = selector.fit(rdd_data)
-df_selected = selector_model.transform(rdd_data)
+    token_chi = {}
+    for token, count_in_category in category_data[1]:
+        A = count_in_category
+        B = token_counts[token] - A
+        C = categories_counts[category] - A
+        D = N - categories_counts[category] - B
+        try:
+            R: float = (N * (((A * D) - (B * C)) ** 2)) / ((A + B) * (A + C) * (B + D) * (C + D))
+        except ZeroDivisionError:
+            R = 0
+        token_chi[token] = R
 
-# Convert back to DataFrame for further analysis or display
-df_result = df_selected.select(col("label"), col("selectedFeatures").alias("features"))
+    top_terms = sorted(token_chi.items(), key=lambda x: x[1], reverse=True)[:75]
+    top_terms_str = f"<{category}>\t{' '.join([f'{term}:{score:.4f}' for term, score in top_terms])}\n"
+    with open("output.txt", 'a') as f:
+        f.write(top_terms_str)
+    return top_terms_str
 
-# Show the resulting DataFrame with selected features
-df_result.show(truncate=False, n=1000000)
+
+# Calculate chi-squared values for each category and word
+chi_squared_values = category_tokens.map(calculate_chi_square)
+result_string = "\n".join(sorted(chi_squared_values.collect()))
+print(result_string)
