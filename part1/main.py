@@ -13,26 +13,34 @@ regex = re.compile(r'[ \t\d()[\]{}.!?,;:+=\-_"\'`~#@&*%€$§\\/]+')
 stopWords = set(sc.textFile(stopwords_path).collect())
 rdd_data = sc.textFile(dataset_path).map(lambda x: json.loads(x))
 
+# generate an RDD with the category, articleID and keywords that are filtered by stopwords
 tokenized = rdd_data.flatMap(
-    lambda x: [(x['category'], x['asin'], word.lower()) for word in set(regex.split(x['reviewText']))])
+    lambda x: [(x['category'], x['asin'], word.lower()) for word in set(regex.split(x['reviewText'])) if word not in stopWords and len(word) > 1])
 
-# counts tokens occurrences throughout all documents
-token_total_counts = dict(tokenized.filter(lambda x: x[1] not in stopWords) \
-        .map(lambda x: (x[2], x[1])) \
+# counts tokens occurrences throughout all documents, the result is a dictionary that looks like this: "{'you': 4462, 'gift': 1642, 'cuisine': 19, 'page': 1441...}"
+token_total_counts = dict(tokenized.map(lambda x: (x[2], x[1])) \
         .groupByKey() \
         .map(lambda x: (x[0], (len(set(x[1]))))).collect())
 
-category_tokens_counts = tokenized.filter(lambda x: x[2] not in stopWords and x[2] and len(x[2]) > 1) \
-    .map(lambda x: ((x[0], x[2]), x[1])) \
+# Count the tokens for each category
+category_tokens_counts = tokenized.map(lambda x: ((x[0], x[2]), x[1])) \
     .groupByKey() \
     .map(lambda x: (x[0][0], (x[0][1], len(set(x[1]))))) \
     .groupByKey()
 
+# Count the documents for each category
 categories_document_counts = dict(rdd_data.map(lambda x: (x['category'], x['asin'])) \
                                   .groupByKey() \
                                   .map(lambda x: (x[0], len(x[1]))) \
                                   .collect())
+# we end up with a dictionary that looks like this
+#{'Patio_Lawn_and_Garde': 994,
+# 'Apps_for_Android': 2638,
+# 'Book': 22507,
+# 'Sports_and_Outdoor': 3269
+# ...}
 
+# Total number of documents
 N = rdd_data.count()
 
 
