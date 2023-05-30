@@ -27,6 +27,12 @@ category_tokens_counts = tokenized.map(lambda x: ((x[0], x[2]), x[1])) \
     .groupByKey() \
     .map(lambda x: (x[0][0], (x[0][1], len(set(x[1]))))) \
     .groupByKey()
+# we end up with an RDD that contains elements like this
+#[
+#('category_name', ('token_name', 'total_token_ocurrences_in_category'))
+#('category_name', ('token_name2', 'total_token_ocurrences_in_category'))
+#('category_name2', ('token_name', 'total_token_ocurrences_in_category'))
+#...]
 
 # Count the documents for each category
 categories_document_counts = dict(rdd_data.map(lambda x: (x['category'], x['asin'])) \
