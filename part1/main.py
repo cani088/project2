@@ -84,3 +84,8 @@ with open("output_rdd.txt", 'w') as f:
     for category_row in sorted(chi_squared_strings.collect()):
         f.write(category_row)
         print(category_row)
+
+all_tokens = list(token_total_counts.keys())
+all_tokens.sort()
+with open('output_rdd.txt', 'a') as f:
+    f.write(" ".join(all_tokens))
