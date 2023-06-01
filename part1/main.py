@@ -80,7 +80,7 @@ def calculate_chi_squared(category):
 
 # Calculate chi-squared values for each category and word
 chi_squared_strings = category_tokens_counts.map(calculate_chi_squared)
-with open("output.txt", 'w') as f:
+with open("output_rdd.txt", 'w') as f:
     for category_row in sorted(chi_squared_strings.collect()):
         f.write(category_row)
         print(category_row)
