@@ -8,22 +8,23 @@ sc = spark.sparkContext
 dataset_path = '../reviews_devset_full.json'
 stopwords_path = '../stopwords.txt'
 
-regex = re.compile(r'[ \t\d()[\]{}.!?,;:+=\-_"\'`~#@&*%€$§\\/]+')
-
+regex = re.compile(r'[ \t\d()[\]{}.!?,;:+=\-_"\'`~#>^@&*%€$§\\/]+')
 stopWords = set(sc.textFile(stopwords_path).collect())
 rdd_data = sc.textFile(dataset_path).map(lambda x: json.loads(x))
 
-# generate an RDD with the category, articleID and keywords that are filtered by stopwords
-tokenized = rdd_data.flatMap(
-    lambda x: [(x['category'], x['asin'], word.lower()) for word in set(regex.split(x['reviewText'])) if word not in stopWords and len(word) > 1])
-
 # counts tokens occurrences throughout all documents, the result is a dictionary that looks like this: "{'you': 4462, 'gift': 1642, 'cuisine': 19, 'page': 1441...}"
-token_total_counts = dict(tokenized.map(lambda x: (x[2], x[1])) \
+token_total_counts = dict(rdd_data.flatMap(
+    lambda x: [(x['asin'], word.lower()) for word in set(regex.split(x['reviewText']))])
+        .filter(lambda x: x[1] and x[1] not in stopWords)
+        .map(lambda x: (x[1], x[0])) \
         .groupByKey() \
         .map(lambda x: (x[0], (len(set(x[1]))))).collect())
 
 # Count the tokens for each category
-category_tokens_counts = tokenized.map(lambda x: ((x[0], x[2]), x[1])) \
+category_tokens_counts = rdd_data.flatMap(
+    lambda x: [(x['category'], x['asin'], word.lower()) for word in set(regex.split(x['reviewText']))])\
+    .filter(lambda x: x[2] and x[2] not in stopWords)\
+    .map(lambda x: ((x[0], x[2]), x[1])) \
     .groupByKey() \
     .map(lambda x: (x[0][0], (x[0][1], len(set(x[1]))))) \
     .groupByKey()
